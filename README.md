@@ -7,6 +7,7 @@
 * [General Requirements](#require)
 * [Quick Install](#quick_install)
 * [Docker](#docker)
+* [Caddy Reverse Proxy](#caddy-reverse-proxy)
 * [GitHub Actions Container Build](#actions-container-build)
 * [Installation](#installation)
 * [Requirements for Specific Blocs](#require_bloc)
@@ -80,6 +81,111 @@ docker run --rm -p 8080:80 vpsinfo:latest
 ```
 
 Then open: <http://localhost:8080>
+
+## Docker Compose (host statistics enabled)
+
+Use Docker Compose when you want the container to read host-level monitoring data:
+
+```bash
+docker compose up -d --build
+```
+
+This starts `vpsinfo` with host PID and network namespaces and bind mounts required paths from the host:
+
+- `/tmp` -> `/tmp` (temp file listing)
+- `/var/lib/vnstat` -> `/var/lib/vnstat` (vnstat database used by `vnstat`)
+- `/proc/user_beancounters` -> `/proc/user_beancounters` (Virtuozzo/OpenVZ bean counters)
+
+### GPU monitoring with Compose
+
+The compose file includes a `vpsinfo-gpu` profile with GPU-facing device/path mappings for NVIDIA, AMD, and Intel telemetry collection.
+
+Start GPU-enabled mode:
+
+```bash
+docker compose --profile gpu up -d --build vpsinfo-gpu
+```
+
+GPU-related paths/devices included by `vpsinfo-gpu`:
+
+- `/dev/dri` -> `/dev/dri`
+- `/dev/kfd` -> `/dev/kfd` (AMD ROCm)
+- `/sys/class/drm` -> `/sys/class/drm` (DRM telemetry)
+- `/proc/driver/nvidia` -> `/proc/driver/nvidia` (NVIDIA driver stats)
+
+And runtime:
+
+- `gpus: all` for NVIDIA container runtime integration
+
+Open: <http://localhost>
+
+To stop:
+
+```bash
+docker compose down
+```
+
+Notes:
+- Host namespace mode is intended for Linux hosts where you need host process/network visibility.
+- If your host does not provide `/proc/user_beancounters`, vpsinfo automatically falls back to standard RAM/swap stats.
+- If your host does not expose one of the GPU device paths, remove that mapping or use the non-GPU `vpsinfo` service.
+
+<a name="caddy-reverse-proxy"/>
+# Caddy Reverse Proxy
+
+## Caddy in front of a local vpsinfo container
+
+1. Run vpsinfo on a local port:
+```bash
+docker run -d --name vpsinfo -p 8080:80 vpsinfo:latest
+```
+2. Create a `Caddyfile`:
+```caddy
+vpsinfo.example.com {
+    reverse_proxy 127.0.0.1:8080
+}
+```
+3. Start or reload Caddy:
+```bash
+caddy reload --config /etc/caddy/Caddyfile
+```
+
+## Caddy + Compose example
+
+You can run Caddy and vpsinfo together with Compose:
+
+```yaml
+services:
+  vpsinfo:
+    image: vpsinfo:latest
+    expose:
+      - "80"
+
+  caddy:
+    image: caddy:2
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - vpsinfo
+
+volumes:
+  caddy_data:
+  caddy_config:
+```
+
+Use this `Caddyfile` in the same folder:
+```caddy
+vpsinfo.example.com {
+    reverse_proxy vpsinfo:80
+}
+```
+
+For GPU or host-stat collection, keep using the existing `vpsinfo` or `vpsinfo-gpu` service settings from this repository and place Caddy in front of that service.
 
 <a name="actions-container-build"/>
 # GitHub Actions Container Build
@@ -243,6 +349,13 @@ This is a partial list of configuration entries. For the complete list and descr
 `2 = mysqlreport_a   (mysql/percona)`<br/>
 `3 = mysqlreport_b   (mysql/percona, MariaDB)`<br/>
 
+**$gpu_mon**<br/>
+`0 = disabled`<br/>
+`1 = enabled`<br/>
+
+**$gpu_refresh**<br/>
+Popup refresh interval in minutes for the GPU window.<br/>
+
 **Database Access**<br/>
 Not needed if `$mysql_mon = 0`.<br/>
 
@@ -354,4 +467,3 @@ GNU General Public License for more details.
 
 The GNU General Public License is available at:
 [http://www.gnu.org/copyleft/gpl.html]()
-
