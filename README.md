@@ -1,11 +1,13 @@
 ![vpsinfo_logo.png](images/vpsinfo_logo.png)
 
 
-(updated: 2015-08-21)
+(updated: 2026-07-27)
 ##### Table of Contents
 * [Introduction](#intro)
 * [General Requirements](#require)
 * [Quick Install](#quick_install)
+* [Docker](#docker)
+* [GitHub Actions Container Build](#actions-container-build)
 * [Installation](#installation)
 * [Requirements for Specific Blocs](#require_bloc)
 * [Configuration](#config)
@@ -53,7 +55,7 @@ These applications are not required to run VPSinfo, but if installed they are us
 # General Requirements
 - Linux operating system
 - webserver ([Nginx](http://nginx.org/), [Apache](http://httpd.apache.org/) ...)
-- PHP v5.4+
+- PHP v8.3+
 - Perl
 - Gcc compiler (for beanc)
 
@@ -66,6 +68,27 @@ For the anxious ones:
 - Test it!
 
 From there you should see what's missing to complete your installation.
+
+<a name="docker"/>
+# Docker
+
+Build and run with Docker:
+
+```bash
+docker build -t vpsinfo:latest .
+docker run --rm -p 8080:80 vpsinfo:latest
+```
+
+Then open: <http://localhost:8080>
+
+<a name="actions-container-build"/>
+# GitHub Actions Container Build
+
+This repository now includes `.github/workflows/docker-build.yml`.
+
+- On every push to `master`, the workflow builds and pushes a container image to GitHub Container Registry (`ghcr.io/<owner>/<repo>`).
+- On version tags (for example `v2.4.0`), it publishes tagged images.
+- The default branch also publishes `latest`.
 
 <a name="installation"/>
 # Installation
@@ -331,5 +354,4 @@ GNU General Public License for more details.
 
 The GNU General Public License is available at:
 [http://www.gnu.org/copyleft/gpl.html]()
-
 
