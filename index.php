@@ -65,6 +65,10 @@ function run_command($command) {
     return trim(implode(PHP_EOL, $output));
 }
 
+function command_exists($command) {
+    return run_command('command -v ' . escapeshellarg($command) . ' 2>/dev/null') !== '';
+}
+
 function is_valid_whois_target($value) {
     if (filter_var($value, FILTER_VALIDATE_IP)) {
         return true;
@@ -96,6 +100,9 @@ $pstree_com     = 'env LANG=C pstree -c';
 $df_com         = 'df -h --exclude-type=tmpfs';
 $tmp_com        = 'ls -a --ignore=sess_* /tmp';
 $mysql_rpt_name = '';
+$gpu_vendor     = '';
+$gpu_summary    = array();
+$gpu_report     = '';
 
 if ($mysql_mon === 1) { // mytop
     $mysql_com = 'env HOME=' . escapeshellarg($userhome) . ' TERM=xterm mytop -u ' . escapeshellarg($my_user) . ' -p ' . escapeshellarg($my_pass) . ' -d ' . escapeshellarg($my_db) . ' -b --nocolor';
@@ -255,6 +262,12 @@ if (array_key_exists('cmd', $_GET) && $_GET['cmd']) {
         $meta  = '';
         $title = 'vnstat -tr';
     }
+    elseif ($cmd === 'gpu') {
+        list($gpu_vendor, $gpu_summary, $gpu_report) = collect_gpu_stats();
+        $out   = esc_html($gpu_report);
+        $meta  = "<meta http-equiv=\"refresh\" content=\"" . ($gpu_refresh * 60) . "\">";
+        $title = "gpu monitor ($gpu_vendor)";
+    }
 
     $buttons = "<input type='button' value='Reload' onClick='window.location.reload();' class='button' title='reload $cmd'> <input type='button' value='Close' onClick='window.close();' class='button' title='close window'>";
     if (stristr($cmd, 'vnstat')) {
@@ -346,6 +359,7 @@ elseif ($mysql_mon > 1) {
 }
 
 $vncmdlink = "<a href='$scriptname?cmd=vnstat' onClick=\"window.open('$scriptname?cmd=vnstat', 'vnstat', 'width=525, height=345, resizable'); return false\" title='open a vnstat window' class='open'>&nbsp;+&nbsp;</a>";
+$gpucmdlink = "<a href='$scriptname?cmd=gpu' onClick=\"window.open('$scriptname?cmd=gpu', 'gpu', 'width=650, height=420, resizable, scrollbars'); return false\" title='open a gpu window' class='open'>&nbsp;+&nbsp;</a>";
 
 // Button for 'ls -al /tmp':
 $lsal = "<input type='button' value='ls -al /tmp' onClick=\"window.open('$scriptname?lsal=1', 'lsal', 'width=730, height=400, scrollbars, resizable'); return false\" title='show detailed list' class='button' style='width:75px'>\n";
@@ -595,6 +609,36 @@ if ($vnstat) {
             <div class='leftscroll'><pre>" . esc_html($vnstat) . "</pre></div>
             <div class='toolbar'>$vn_sampl $vn_days $vn_mons</div>";
     }
+}
+
+$gpu_head = '';
+$gpu_div  = '';
+if ($gpu_mon) {
+    list($gpu_vendor, $gpu_summary, $gpu_report) = collect_gpu_stats();
+
+    if ( ! empty($gpu_summary['util']) || ! empty($gpu_summary['temp']) || ! empty($gpu_summary['power']) || ! empty($gpu_summary['memory'])) {
+        $gpu_bits = array();
+        if ( ! empty($gpu_summary['util'])) {
+            $gpu_bits[] = $gpu_summary['util'];
+        }
+        if ( ! empty($gpu_summary['temp'])) {
+            $gpu_bits[] = $gpu_summary['temp'];
+        }
+        if ( ! empty($gpu_summary['power'])) {
+            $gpu_bits[] = $gpu_summary['power'];
+        }
+        $gpu_head_value = implode(' / ', $gpu_bits);
+        $gpu_head =
+            "<td valign='top' nowrap>
+                <div class='head_label' title='gpu utilization and thermals'>gpu ($gpu_vendor)</div>
+                <div class='head_num2'>$gpu_head_value</div>
+            </td>";
+    }
+
+    $gpu_div =
+        "<div class='subleftcmd'>$gpucmdlink</div>
+        <div class='subleft'>GPU monitor <span style=\"font-weight:normal;font-size: 0.85em;color: #aaa;\">($gpu_vendor)</span></div>
+        <div class='left'><pre>" . esc_html($gpu_report) . "</pre></div>\n";
 }
 // vpsstat-like processing of user_beancounters or RAM & swap -----------------
 
@@ -970,6 +1014,142 @@ a shell prompt as root:
     }
 
     return array($vpsstat, $mem1, $mem1_units, $mem1_label, $mem1_tip, $mem2, $mem2_units, $mem2_label, $mem2_tip);
+}
+
+function collect_gpu_stats() {
+    $summary = array(
+        'util'   => '',
+        'temp'   => '',
+        'power'  => '',
+        'memory' => '',
+    );
+    $vendor = 'none';
+    $report = "GPU monitoring tools were not found.\nSupported adapters: nvidia-smi, rocm-smi, amd-smi, intel_gpu_frequency, intel_gpu_top.";
+
+    if (command_exists('nvidia-smi')) {
+        $vendor = 'nvidia';
+        $raw    = run_command('nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw --format=csv,noheader,nounits 2>/dev/null');
+        if ($raw) {
+            $lines      = explode("\n", $raw);
+            $report     = "NVIDIA metrics\n--------------\n";
+            $util_sum   = 0.0;
+            $temp_sum   = 0.0;
+            $power_sum  = 0.0;
+            $mem_used   = 0.0;
+            $mem_total  = 0.0;
+            $gpu_count  = 0;
+            foreach ($lines as $line) {
+                $line = trim($line);
+                if ($line === '') {
+                    continue;
+                }
+                $cols = str_getcsv($line);
+                if (count($cols) < 6) {
+                    continue;
+                }
+                $name      = trim($cols[0]);
+                $util      = (float) trim($cols[1]);
+                $used_mb   = (float) trim($cols[2]);
+                $total_mb  = (float) trim($cols[3]);
+                $temp_c    = (float) trim($cols[4]);
+                $power_w   = (float) trim($cols[5]);
+                $gpu_count++;
+                $util_sum  += $util;
+                $temp_sum  += $temp_c;
+                $power_sum += $power_w;
+                $mem_used  += $used_mb;
+                $mem_total += $total_mb;
+                $report    .= sprintf(
+                    "%s: util %.0f%% | mem %.0f/%.0f MiB | temp %.0fC | power %.0fW\n",
+                    $name,
+                    $util,
+                    $used_mb,
+                    $total_mb,
+                    $temp_c,
+                    $power_w
+                );
+            }
+            if ($gpu_count > 0) {
+                $summary['util']  = round($util_sum / $gpu_count) . '%';
+                $summary['temp']  = round($temp_sum / $gpu_count) . 'C';
+                $summary['power'] = round($power_sum / $gpu_count) . 'W';
+                if ($mem_total > 0) {
+                    $summary['memory'] = round(($mem_used / $mem_total) * 100) . '% mem';
+                }
+                return array($vendor, $summary, trim($report));
+            }
+        }
+    }
+
+    if (command_exists('rocm-smi')) {
+        $vendor = 'amd';
+        $raw    = run_command('rocm-smi --showuse --showmemuse --showtemp --showpower --showproductname 2>/dev/null');
+        if ($raw) {
+            $report = "AMD metrics (rocm-smi)\n----------------------\n$raw";
+            if (preg_match('/GPU use[^0-9]*([0-9]+(?:\\.[0-9]+)?)%/i', $raw, $hits) === 1) {
+                $summary['util'] = round((float) $hits[1]) . '%';
+            }
+            if (preg_match('/GPU memory use[^0-9]*([0-9]+(?:\\.[0-9]+)?)%/i', $raw, $hits) === 1) {
+                $summary['memory'] = round((float) $hits[1]) . '% mem';
+            }
+            if (preg_match('/Temp(?:erature)?[^0-9]*([0-9]+(?:\\.[0-9]+)?)/i', $raw, $hits) === 1) {
+                $summary['temp'] = round((float) $hits[1]) . 'C';
+            }
+            if (preg_match('/Power[^0-9]*([0-9]+(?:\\.[0-9]+)?)\\s*W/i', $raw, $hits) === 1) {
+                $summary['power'] = round((float) $hits[1]) . 'W';
+            }
+            return array($vendor, $summary, trim($report));
+        }
+    }
+
+    if (command_exists('amd-smi')) {
+        $vendor = 'amd';
+        $raw    = run_command('amd-smi monitor 2>/dev/null');
+        if ($raw) {
+            $report = "AMD metrics (amd-smi)\n---------------------\n$raw";
+            if (preg_match('/util(?:ization)?[^0-9]*([0-9]+(?:\\.[0-9]+)?)%/i', $raw, $hits) === 1) {
+                $summary['util'] = round((float) $hits[1]) . '%';
+            }
+            if (preg_match('/temp(?:erature)?[^0-9]*([0-9]+(?:\\.[0-9]+)?)/i', $raw, $hits) === 1) {
+                $summary['temp'] = round((float) $hits[1]) . 'C';
+            }
+            if (preg_match('/power[^0-9]*([0-9]+(?:\\.[0-9]+)?)\\s*W/i', $raw, $hits) === 1) {
+                $summary['power'] = round((float) $hits[1]) . 'W';
+            }
+            return array($vendor, $summary, trim($report));
+        }
+    }
+
+    if (command_exists('intel_gpu_frequency')) {
+        $vendor = 'intel';
+        $raw    = run_command('intel_gpu_frequency -g 2>/dev/null');
+        if ($raw) {
+            $report = "Intel metrics (intel_gpu_frequency)\n----------------------------------\n$raw";
+            if (preg_match('/cur\\s+([0-9]+)\\s*MHz/i', $raw, $hits) === 1) {
+                $summary['util'] = $hits[1] . ' MHz';
+            }
+            $busy = run_command('cat /sys/class/drm/card0/device/gpu_busy_percent 2>/dev/null');
+            if ($busy !== '' && is_numeric($busy)) {
+                $summary['memory'] = '';
+                $summary['util']   = round((float) $busy) . '%';
+            }
+            return array($vendor, $summary, trim($report));
+        }
+    }
+
+    if (command_exists('intel_gpu_top')) {
+        $vendor = 'intel';
+        $raw    = run_command('timeout 2 intel_gpu_top -J -s 1000 -o - 2>/dev/null');
+        if ($raw) {
+            $report = "Intel metrics (intel_gpu_top)\n----------------------------\n$raw";
+            if (preg_match('/"busy"\\s*:\\s*([0-9]+(?:\\.[0-9]+)?)/', $raw, $hits) === 1) {
+                $summary['util'] = round((float) $hits[1]) . '%';
+            }
+            return array($vendor, $summary, trim($report));
+        }
+    }
+
+    return array($vendor, $summary, $report);
 }
 
 
@@ -1373,6 +1553,7 @@ if ($gzip) {
                                 class='head_units'> <?php echo($mem2_units); ?></span></div>
                     </td>
                     <?php echo($vnstat_head); ?>
+                    <?php echo($gpu_head); ?>
                     <td valign='top' nowrap>
                         <div class='head_label' title='number of current TCP connections'>tcp conn</div>
                         <div class='head_num2'><?php echo($num_tcp); ?></div>
@@ -1451,6 +1632,7 @@ if ($gzip) {
                     </table>
                 </div>
                 <?php echo($vnstat_div); ?>
+                <?php echo($gpu_div); ?>
                 <?php echo($mysql_div); ?>
             </div>
         </td>

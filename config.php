@@ -92,6 +92,13 @@ $vpsstat_refresh = 5;
 $netstat_refresh = 5;
 $mysql_refresh   = 5;
 $vnstat_refresh  = 15;
+$gpu_refresh     = 5;
+
+/* GPU monitor:
+ *      0 = disabled
+ *      1 = enabled
+ */
+$gpu_mon = 1;
 
 
 /* Bandwidth alert:

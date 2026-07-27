@@ -1,0 +1,55 @@
+x-vpsinfo-common: &vpsinfo-common
+  build:
+    context: .
+    dockerfile: Dockerfile
+  restart: unless-stopped
+  pid: host
+  network_mode: host
+  volumes:
+    - type: bind
+      source: /tmp
+      target: /tmp
+      read_only: true
+    - type: bind
+      source: /var/lib/vnstat
+      target: /var/lib/vnstat
+      read_only: true
+    - type: bind
+      source: /proc/user_beancounters
+      target: /proc/user_beancounters
+      read_only: true
+
+services:
+  vpsinfo:
+    <<: *vpsinfo-common
+    container_name: vpsinfo
+
+  vpsinfo-gpu:
+    <<: *vpsinfo-common
+    container_name: vpsinfo-gpu
+    profiles: ["gpu"]
+    gpus: all
+    devices:
+      - /dev/dri:/dev/dri
+      - /dev/kfd:/dev/kfd
+    volumes:
+      - type: bind
+        source: /tmp
+        target: /tmp
+        read_only: true
+      - type: bind
+        source: /var/lib/vnstat
+        target: /var/lib/vnstat
+        read_only: true
+      - type: bind
+        source: /proc/user_beancounters
+        target: /proc/user_beancounters
+        read_only: true
+      - type: bind
+        source: /sys/class/drm
+        target: /sys/class/drm
+        read_only: true
+      - type: bind
+        source: /proc/driver/nvidia
+        target: /proc/driver/nvidia
+        read_only: true
